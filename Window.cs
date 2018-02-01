@@ -25,14 +25,17 @@
         public SurfaceKhr GetSurface(Instance inst) => surf ?? (surf = MakeSurface(inst));
 
         SurfaceKhr MakeSurface(Instance inst) {
-            switch (SDL.SDL_GetPlatform()) {
+            SDL.SDL_Vulkan_CreateSurface(handle, inst, out IntPtr surfHandle);
+            AllocationCallbacks b = new AllocationCallbacks();
+            return new SurfaceSDL(inst, ref b, surfHandle);
+            /*switch (SDL.SDL_GetPlatform()) {
                 case "Windows":
                     return inst.CreateWin32SurfaceKhr(new Win32SurfaceCreateInfoKhr(inst, handle));
                 case "Linux":
                     return inst.CreateXlibSurfaceKhr(new XlibSurfaceCreateInfoKhr(IntPtr.Zero, handle));
                 default:
                     throw new NotImplementedException();
-            }
+            }*/
         }
 
         public static void InitSDL() {
