@@ -1,43 +1,73 @@
 ﻿using System;
 
 namespace Raft {
+    using System.Collections.Generic;
     using System.Runtime.InteropServices;
+    using System.Security.Cryptography.X509Certificates;
     using System.Text;
     using SDL2;
     using VulkanCore;
     using VulkanCore.Khr;
+    using VulkanCubes;
 
     public class Forge {
+        static bool SDLInit;
         const int EngineVersion = 1;
+        public readonly Instance instance;
+        public List<Window> windows = new List<Window>();
 
-        string name;
-        int version;
+        public Forge(int appVersion, string name, int winX, int winY, int winWidth, int winHeight) {
 
-        public void Init(Window window) {
             ApplicationInfo appInfo = new ApplicationInfo {
                 ApplicationName = name,
-                ApplicationVersion = version,
+                ApplicationVersion = appVersion,
                 EngineName = "Raft",
                 EngineVersion = EngineVersion,
                 ApiVersion = new Version(1, 0, 61)
             };
 
+            if (!SDLInit) { InitSDL(); }
+
+            windows.Add(new Window(name, winX, winY, winWidth, winHeight));
+
             IntPtr[] pNames = new IntPtr[0];
             // you have to call this twice because something, somewhere, is terrible
-            SDL.SDL_Vulkan_GetInstanceExtensions(window.handle, out uint pCount, null);
+            SDL.SDL_Vulkan_GetInstanceExtensions(windows[0].handle, out uint pCount, null);
             pNames = new IntPtr[pCount];
-            SDL.SDL_Vulkan_GetInstanceExtensions(window.handle, out pCount, pNames);
+            SDL.SDL_Vulkan_GetInstanceExtensions(windows[0].handle, out pCount, pNames);
 
-            InstanceCreateInfo instInfo = new InstanceCreateInfo() {
+            InstanceCreateInfo instInfo = new InstanceCreateInfo {
                 ApplicationInfo = appInfo,
                 EnabledExtensionNames = pNamesToStrings(pNames)
             };
 
-            Instance inst = new Instance(instInfo);
+            instance = new Instance(instInfo);
+        }
 
-            // make surface
+        public void Quit() {
+            SDL.SDL_Quit();
+            foreach (Window window in windows) { DestroyWindow(window); }
+        }
 
-            SurfaceKhr surf = window.GetSurface(inst);
+        public Window MakeWindow(string title, int x, int y, int width, int height) {
+            Window res = new Window(title, x, y, width, height);
+            windows.Add(res);
+            return res;
+        }
+
+        public void DestroyWindow(Window win) {
+            win.Destroy();
+            windows.Remove(win);
+        }
+
+        public void DestroyWindow(int index) {
+            windows[index].Destroy();
+            windows.RemoveAt(index);
+        }
+
+        public static void InitSDL() {
+            if (SDL.SDL_Init(SDL.SDL_INIT_EVERYTHING) != 0) { throw new SDLException(); }
+            SDLInit = true;
         }
 
         string[] pNamesToStrings(IntPtr[] pNames) {
