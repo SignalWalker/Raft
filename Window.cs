@@ -22,8 +22,8 @@
         }
 
         internal void Destroy() {
-            context.Dispose();
-            surf.Dispose();
+            context?.Dispose();
+            surf?.Dispose();
             SDL.SDL_DestroyWindow(handle);
         }
 

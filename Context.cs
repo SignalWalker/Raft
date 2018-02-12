@@ -1,7 +1,11 @@
 ﻿namespace Raft {
     using System;
+    using System.Collections.Generic;
+    using System.Linq;
+    using System.Runtime.Serialization.Formatters;
     using VulkanCore;
     using VulkanCore.Khr;
+    using Buffer = VulkanCore.Buffer;
 
     public class Context {
         readonly PhysicalDevice physicalDevice;
@@ -25,6 +29,13 @@
         public Queue PresentQueue => presentQueue;
         public CommandPool GraphicsCommandPool => graphicsCommandPool;
         public CommandPool ComputeCommandPool => computeCommandPool;
+        public List<CommandBuffer> graphicsBuffers;
+        public List<CommandBuffer> computeBuffers;
+        public SwapchainKhr swapchain;
+        public List<Image> swapchainImages;
+        public Image depthBuffer;
+        public Buffer uniformBuffer;
+        public int width, height;
 
         public Context(Instance inst, SurfaceKhr surf) {
 
@@ -86,11 +97,87 @@
             // Create command pool(s).
             graphicsCommandPool = Device.CreateCommandPool(new CommandPoolCreateInfo(graphicsQueueFamilyIndex));
             computeCommandPool = Device.CreateCommandPool(new CommandPoolCreateInfo(computeQueueFamilyIndex));
+
+            swapchain = CreateSwapchain(surf);
+            MakeBuffers();
+            depthBuffer = MakeDepthBuffer(true);
+            uniformBuffer = MakeUniformBuffer();
+        }
+
+        void MakeBuffers() {
+            graphicsBuffers = GraphicsCommandPool.AllocateBuffers(
+                new CommandBufferAllocateInfo(CommandBufferLevel.Primary, swapchainImages.Count)).ToList();
+        }
+
+        SwapchainKhr CreateSwapchain(SurfaceKhr surface) {
+            SurfaceCapabilitiesKhr capabilities = PhysicalDevice.GetSurfaceCapabilitiesKhr(surface);
+            SurfaceFormatKhr[] formats = PhysicalDevice.GetSurfaceFormatsKhr(surface);
+            PresentModeKhr[] presentModes = PhysicalDevice.GetSurfacePresentModesKhr(surface);
+            Format format = formats.Length == 1 && formats[0].Format == Format.Undefined
+                                ? Format.B8G8R8A8UNorm
+                                : formats[0].Format;
+            PresentModeKhr presentMode =
+                presentModes.Contains(PresentModeKhr.Mailbox) ? PresentModeKhr.Mailbox :
+                presentModes.Contains(PresentModeKhr.FifoRelaxed) ? PresentModeKhr.FifoRelaxed :
+                presentModes.Contains(PresentModeKhr.Fifo) ? PresentModeKhr.Fifo :
+                PresentModeKhr.Immediate;
+
+            return Device.CreateSwapchainKhr(new SwapchainCreateInfoKhr(
+                surface,
+                format,
+                capabilities.CurrentExtent,
+                capabilities.CurrentTransform,
+                presentMode));
+        }
+
+        Image MakeDepthBuffer(bool bindMemory = false) {
+            ImageCreateInfo info = new ImageCreateInfo {
+                ImageType = ImageType.Image2D,
+                Format = Format.D16UNorm,
+                Extent = new Extent3D(width, height, 1),
+                MipLevels = 1,
+                ArrayLayers = 1,
+                Samples = SampleCounts.Count1, // this is a mystery
+                InitialLayout = ImageLayout.Undefined,
+                Usage = ImageUsages.DepthStencilAttachment,
+                QueueFamilyIndices = null,
+                SharingMode = SharingMode.Exclusive,
+                Flags = 0
+            };
+            Image res = Device.CreateImage(info);
+            if (bindMemory) {
+                MemoryRequirements memReq = res.GetMemoryRequirements();
+                MemoryAllocateInfo mInfo = new MemoryAllocateInfo {
+                    AllocationSize = res.GetMemoryRequirements().Size,
+                    MemoryTypeIndex = memoryProperties.MemoryTypes.IndexOf(memReq.MemoryTypeBits,
+                        VulkanCore.MemoryProperties.DeviceLocal)
+                };
+                DeviceMemory mem = Device.AllocateMemory(mInfo);
+                depthBuffer.BindMemory(mem);
+            }
+            return res;
+        }
+
+        Buffer MakeUniformBuffer(long size, bool bindMemory = false) {
+            BufferCreateInfo bInfo = new BufferCreateInfo {
+                Usage = BufferUsages.UniformBuffer,
+                Size = size,
+                QueueFamilyIndices = null,
+                SharingMode = SharingMode.Exclusive,
+                Flags = 0
+            };
+            Buffer res = Device.CreateBuffer(bInfo);
+            if (bindMemory) {
+
+            }
         }
 
         public void Dispose() {
             ComputeCommandPool.Dispose();
             GraphicsCommandPool.Dispose();
+            swapchain.Dispose();
+            graphicsBuffers.ForEach(b => b.Dispose());
+            computeBuffers.ForEach(b => b.Dispose());
             Device.Dispose();
         }
     }
