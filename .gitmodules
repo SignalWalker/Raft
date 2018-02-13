@@ -4,3 +4,6 @@
 [submodule "VulkanCore"]
 	path = VulkanCore
 	url = https://github.com/signalwalker/VulkanCore.git
+[submodule "Walker"]
+	path = Walker
+	url = https://github.com/signalwalker/Walker.git
