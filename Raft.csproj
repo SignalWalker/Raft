@@ -3,7 +3,7 @@
     <TargetFramework>netstandard2.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\SDL2-CS\SDL2-CS.Core.csproj" />
-    <ProjectReference Include="..\VulkanCore\Src\VulkanCore.csproj" />
+    <ProjectReference Include="SDL2-CS\SDL2-CS.Core.csproj" />
+    <ProjectReference Include="VulkanCore\Src\VulkanCore.csproj" />
   </ItemGroup>
 </Project>
