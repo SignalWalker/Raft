@@ -101,7 +101,7 @@
             swapchain = CreateSwapchain(surf);
             MakeBuffers();
             depthBuffer = MakeDepthBuffer(true);
-            uniformBuffer = MakeUniformBuffer();
+            uniformBuffer = MakeUniformBuffer( , true);
         }
 
         void MakeBuffers() {
@@ -148,12 +148,12 @@
             if (bindMemory) {
                 MemoryRequirements memReq = res.GetMemoryRequirements();
                 MemoryAllocateInfo mInfo = new MemoryAllocateInfo {
-                    AllocationSize = res.GetMemoryRequirements().Size,
+                    AllocationSize = memReq.Size,
                     MemoryTypeIndex = memoryProperties.MemoryTypes.IndexOf(memReq.MemoryTypeBits,
                         VulkanCore.MemoryProperties.DeviceLocal)
                 };
                 DeviceMemory mem = Device.AllocateMemory(mInfo);
-                depthBuffer.BindMemory(mem);
+                res.BindMemory(mem);
             }
             return res;
         }
@@ -168,8 +168,18 @@
             };
             Buffer res = Device.CreateBuffer(bInfo);
             if (bindMemory) {
-
+                MemoryRequirements memReq = res.GetMemoryRequirements();
+                MemoryAllocateInfo mInfo = new MemoryAllocateInfo {
+                    AllocationSize = memReq.Size,
+                    MemoryTypeIndex = memoryProperties.MemoryTypes.IndexOf(
+                        memReq.MemoryTypeBits,
+                        VulkanCore.MemoryProperties.DeviceLocal)
+                };
+                DeviceMemory mem = Device.AllocateMemory(mInfo);
+                res.BindMemory(mem);
             }
+
+            return res;
         }
 
         public void Dispose() {
