@@ -2,9 +2,12 @@
     using System;
     using System.Collections.Generic;
     using System.Linq;
+    using System.Runtime.InteropServices;
     using System.Runtime.Serialization.Formatters;
     using VulkanCore;
     using VulkanCore.Khr;
+    using Walker.Data.Geometry.Speed.Rotation;
+    using Walker.Data.Geometry.Speed.Space;
     using Buffer = VulkanCore.Buffer;
 
     public class Context {
@@ -33,9 +36,11 @@
         public List<CommandBuffer> computeBuffers;
         public SwapchainKhr swapchain;
         public List<Image> swapchainImages;
-        public Image depthBuffer;
-        public Buffer uniformBuffer;
+        public ImageWrapper depthBuffer;
+        public BufferWrapper uniformBuffer;
+        public DescriptorSetLayout descLayout;
         public int width, height;
+        public PipelineLayout pipelineLayout;
 
         public Context(Instance inst, SurfaceKhr surf) {
 
@@ -100,8 +105,32 @@
 
             swapchain = CreateSwapchain(surf);
             MakeBuffers();
-            depthBuffer = MakeDepthBuffer(true);
-            uniformBuffer = MakeUniformBuffer( , true);
+            depthBuffer = ImageWrapper.DepthStencil(this, width, height);
+
+            Matrix4F mvp = new Matrix4F(1, 0, 0, 0,
+                0, -1, 0, 0,
+                0, 0, .5f, 0,
+                0, 0, .5f, 1) * Matrix4F.CreatePerspectiveFieldOfView(45, 1, .1f, 100)
+                * Matrix4F.LookAt(new Vector3F(0, 3, 10),
+                                  new Vector3F(0, 0, 0),
+                                  new Vector3F(0, 1, 0))
+                * Matrix4F.Identity;
+
+            uniformBuffer = BufferWrapper.DynamicUniform<Matrix4F>(this, 1);
+            IntPtr map = uniformBuffer.memory.Map(0, Interop.SizeOf<Matrix4F>());
+            Marshal.StructureToPtr(mvp, map, true);
+            uniformBuffer.memory.Unmap();
+
+
+            DescriptorSetLayoutBinding dSLBin = new DescriptorSetLayoutBinding(0, DescriptorType.UniformBuffer, 1, ShaderStages.Vertex);
+            DescriptorSetLayoutCreateInfo dSLCInfo = new DescriptorSetLayoutCreateInfo(dSLBin);
+            descLayout = Device.CreateDescriptorSetLayout(dSLCInfo);
+            PipelineLayoutCreateInfo pLCInfo = new PipelineLayoutCreateInfo(new[] {descLayout});
+            pipelineLayout = Device.CreatePipelineLayout(pLCInfo);
+
+            DescriptorPoolSize dPSize = new DescriptorPoolSize(DescriptorType.UniformBuffer, 1);
+            DescriptorPoolCreateInfo dPInfo = new DescriptorPoolCreateInfo(1, new[] {dPSize});
+            descriptorPool =
         }
 
         void MakeBuffers() {
@@ -176,6 +205,9 @@
                         VulkanCore.MemoryProperties.DeviceLocal)
                 };
                 DeviceMemory mem = Device.AllocateMemory(mInfo);
+                mem.Map(0, memReq.Size);
+
+                mem.Unmap();
                 res.BindMemory(mem);
             }
 
