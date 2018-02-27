@@ -1,6 +1,7 @@
 ﻿namespace Raft {
     using System;
     using System.Collections.Generic;
+    using System.IO;
     using System.Linq;
     using System.Runtime.InteropServices;
     using System.Runtime.Serialization.Formatters;
@@ -35,12 +36,15 @@
         public List<CommandBuffer> graphicsBuffers;
         public List<CommandBuffer> computeBuffers;
         public SwapchainKhr swapchain;
-        public List<Image> swapchainImages;
+        public Image[] swapchainImages;
         public ImageWrapper depthBuffer;
         public BufferWrapper uniformBuffer;
         public DescriptorSetLayout descLayout;
         public int width, height;
         public PipelineLayout pipelineLayout;
+        public DescriptorPool descriptorPool;
+        public DescriptorSet[] descriptorSets;
+        public ShaderModule[] shaderStages;
 
         public Context(Instance inst, SurfaceKhr surf) {
 
@@ -104,7 +108,9 @@
             computeCommandPool = Device.CreateCommandPool(new CommandPoolCreateInfo(computeQueueFamilyIndex));
 
             swapchain = CreateSwapchain(surf);
-            MakeBuffers();
+            swapchainImages = swapchain.GetImages();
+            graphicsBuffers = GraphicsCommandPool.AllocateBuffers(
+                new CommandBufferAllocateInfo(CommandBufferLevel.Primary, swapchainImages.Length)).ToList();
             depthBuffer = ImageWrapper.DepthStencil(this, width, height);
 
             Matrix4F mvp = new Matrix4F(1, 0, 0, 0,
@@ -116,11 +122,10 @@
                                   new Vector3F(0, 1, 0))
                 * Matrix4F.Identity;
 
-            uniformBuffer = BufferWrapper.DynamicUniform<Matrix4F>(this, 1);
-            IntPtr map = uniformBuffer.memory.Map(0, Interop.SizeOf<Matrix4F>());
-            Marshal.StructureToPtr(mvp, map, true);
+            uniformBuffer = BufferWrapper.DynamicUniform<float>(this, 16);
+            IntPtr map = uniformBuffer.memory.Map(0, Interop.SizeOf<float>() * 16);
+            Marshal.Copy(mvp.Transpose.Values, 0, map, 16); // transpose because opengl (and, presumably, vulkan) use column-major
             uniformBuffer.memory.Unmap();
-
 
             DescriptorSetLayoutBinding dSLBin = new DescriptorSetLayoutBinding(0, DescriptorType.UniformBuffer, 1, ShaderStages.Vertex);
             DescriptorSetLayoutCreateInfo dSLCInfo = new DescriptorSetLayoutCreateInfo(dSLBin);
@@ -130,12 +135,75 @@
 
             DescriptorPoolSize dPSize = new DescriptorPoolSize(DescriptorType.UniformBuffer, 1);
             DescriptorPoolCreateInfo dPInfo = new DescriptorPoolCreateInfo(1, new[] {dPSize});
-            descriptorPool =
+            descriptorPool = device.CreateDescriptorPool(dPInfo);
+
+            DescriptorSetAllocateInfo dSAInfo = new DescriptorSetAllocateInfo(1, descLayout);
+            descriptorSets = descriptorPool.AllocateSets(dSAInfo);
+
+            DescriptorBufferInfo dBInfo = new DescriptorBufferInfo(uniformBuffer.buffer);
+            WriteDescriptorSet wDSet = new WriteDescriptorSet(descriptorSets[0], 0, 0, 1,
+                DescriptorType.UniformBuffer, null, new[] {dBInfo});
+            descriptorPool.UpdateSets(new[] {wDSet});
         }
 
-        void MakeBuffers() {
-            graphicsBuffers = GraphicsCommandPool.AllocateBuffers(
-                new CommandBufferAllocateInfo(CommandBufferLevel.Primary, swapchainImages.Count)).ToList();
+        void RenderPass() {
+
+            AttachmentDescription[] attachments = new AttachmentDescription[2];
+            attachments[0] = new AttachmentDescription {
+                Format = Format.B8G8R8A8SRgb, // idk what this is supposed to be
+                Samples = SampleCounts.Count1, // same ^
+                LoadOp = AttachmentLoadOp.Clear,
+                StoreOp = AttachmentStoreOp.Store,
+                StencilLoadOp = AttachmentLoadOp.DontCare,
+                StencilStoreOp = AttachmentStoreOp.DontCare,
+                InitialLayout = ImageLayout.ColorAttachmentOptimal,
+                FinalLayout = ImageLayout.PresentSrcKhr
+            };
+            attachments[1] = new AttachmentDescription {
+                Format = depthBuffer.Format,
+                Samples = SampleCounts.Count1, // aaaah
+                LoadOp = AttachmentLoadOp.Clear,
+                StoreOp = AttachmentStoreOp.DontCare,
+                StencilLoadOp = AttachmentLoadOp.DontCare,
+                StencilStoreOp = AttachmentStoreOp.DontCare,
+                InitialLayout = ImageLayout.DepthStencilAttachmentOptimal,
+                FinalLayout = ImageLayout.DepthStencilAttachmentOptimal
+            };
+
+            AttachmentReference color = new AttachmentReference(0, ImageLayout.ColorAttachmentOptimal);
+            AttachmentReference depth = new AttachmentReference(1, ImageLayout.DepthStencilAttachmentOptimal);
+
+            SubpassDescription subPass = new SubpassDescription {
+                ColorAttachments = new []{color},
+                DepthStencilAttachment = depth
+            };
+
+            RenderPassCreateInfo passInfo = new RenderPassCreateInfo(new[] {subPass}, attachments);
+            RenderPass pass = device.CreateRenderPass(passInfo);
+
+            shaderStages = new[] {
+                LoadShaderModule("Resources/Shaders/vert.spv"),
+                LoadShaderModule("Resources/Shaders/frag.spv")
+            };
+
+            PipelineShaderStageCreateInfo[] shaderStageInfos = {
+                new PipelineShaderStageCreateInfo(ShaderStages.Vertex, shaderStages[0], "main"),
+                new PipelineShaderStageCreateInfo(ShaderStages.Fragment, shaderStages[1], "main")
+            };
+
+            ImageView[] imgAttachments = new ImageView[2];
+            imgAttachments[1] = depthBuffer.View;
+        }
+
+        public ShaderModule LoadShaderModule(string path)
+        {
+            const int defaultBufferSize = 4096;
+            using (Stream stream = new FileStream(path, FileMode.Open, FileAccess.Read))
+            using (var ms = new MemoryStream())
+            {
+                stream.CopyTo(ms, defaultBufferSize);
+                return device.CreateShaderModule(new ShaderModuleCreateInfo(ms.ToArray()));
+            }
         }
 
         SwapchainKhr CreateSwapchain(SurfaceKhr surface) {
