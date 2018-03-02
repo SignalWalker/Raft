@@ -7,6 +7,7 @@
     using System.Runtime.Serialization.Formatters;
     using VulkanCore;
     using VulkanCore.Khr;
+    using VulkanCore.Khx;
     using Walker.Data.Geometry.Speed.Rotation;
     using Walker.Data.Geometry.Speed.Space;
     using Buffer = VulkanCore.Buffer;
@@ -45,6 +46,13 @@
         public DescriptorPool descriptorPool;
         public DescriptorSet[] descriptorSets;
         public ShaderModule[] shaderStages;
+        public ImageView[] imgAttachments;
+        public Framebuffer[] framebuffers;
+        public BufferWrapper vbo;
+        public BufferWrapper index;
+        public Pipeline pipeline;
+        Semaphore semaphore;
+        Primitive cube;
 
         public Context(Instance inst, SurfaceKhr surf) {
 
@@ -144,9 +152,6 @@
             WriteDescriptorSet wDSet = new WriteDescriptorSet(descriptorSets[0], 0, 0, 1,
                 DescriptorType.UniformBuffer, null, new[] {dBInfo});
             descriptorPool.UpdateSets(new[] {wDSet});
-        }
-
-        void RenderPass() {
 
             AttachmentDescription[] attachments = new AttachmentDescription[2];
             attachments[0] = new AttachmentDescription {
@@ -191,8 +196,110 @@
                 new PipelineShaderStageCreateInfo(ShaderStages.Fragment, shaderStages[1], "main")
             };
 
-            ImageView[] imgAttachments = new ImageView[2];
+
+            imgAttachments = new ImageView[2];
             imgAttachments[1] = depthBuffer.View;
+
+            List<ImageView> imgViews = swapchainImages.Select(i => i.CreateView(
+                                                                  new ImageViewCreateInfo(
+                                                                  swapchain.Format,
+                                                                  new ImageSubresourceRange(ImageAspects.Color, 0, 1, 0, 1))))
+                                           as List<ImageView>;
+
+            framebuffers = new Framebuffer[swapchainImages.Length];
+            for (int i = 0; i < framebuffers.Length; i++) {
+                imgAttachments[0] = imgViews[i];
+                FramebufferCreateInfo fBufferInfo = new FramebufferCreateInfo(imgAttachments, width, height);
+                framebuffers[i] = pass.CreateFramebuffer(fBufferInfo);
+            }
+
+            cube = Primitive.Box(1,1,1);
+
+            vbo = BufferWrapper.Vertex(this, cube.verts);
+            index = BufferWrapper.Index(this, cube.indices);
+
+            PipelineVertexInputStateCreateInfo pVISCInfo = new PipelineVertexInputStateCreateInfo(
+                new[] {
+                    new VertexInputBindingDescription(0, Interop.SizeOf<Vertex>(), VertexInputRate.Vertex)
+                },
+                new[] {
+                    new VertexInputAttributeDescription(0, 0, Format.R32G32B32SFloat, 0),
+                    new VertexInputAttributeDescription(1, 0, Format.R32G32B32SFloat, 24),
+                    new VertexInputAttributeDescription(2, 0, Format.R32G32B32SFloat, 12)
+                });
+
+
+            PipelineDynamicStateCreateInfo dStateInfo = new PipelineDynamicStateCreateInfo();
+            PipelineInputAssemblyStateCreateInfo iaInfo = new PipelineInputAssemblyStateCreateInfo(PrimitiveTopology.TriangleList);
+            PipelineRasterizationStateCreateInfo rsInfo = new PipelineRasterizationStateCreateInfo() {
+                PolygonMode = PolygonMode.Fill,
+                CullMode = CullModes.Back,
+                FrontFace = FrontFace.CounterClockwise,
+                DepthClampEnable = true,
+                RasterizerDiscardEnable = false,
+                DepthBiasClamp = 0,
+                DepthBiasConstantFactor = 0,
+                DepthBiasEnable = false,
+                DepthBiasSlopeFactor = 0,
+                LineWidth = 1f
+            };
+            PipelineColorBlendStateCreateInfo cbInfo = new PipelineColorBlendStateCreateInfo(new [] { new PipelineColorBlendAttachmentState {
+                ColorWriteMask = ColorComponents.R | ColorComponents.G | ColorComponents.B,
+                BlendEnable = false
+            } });
+            PipelineViewportStateCreateInfo vpInfo = new PipelineViewportStateCreateInfo(
+                new Viewport(0, 0, width, height),
+                new Rect2D(0, 0, width, height));
+            PipelineDepthStencilStateCreateInfo dsInfo = new PipelineDepthStencilStateCreateInfo {
+                DepthTestEnable = true,
+                DepthWriteEnable = true,
+                DepthCompareOp = CompareOp.LessOrEqual,
+                DepthBoundsTestEnable = false,
+                StencilTestEnable = false
+            };
+            dsInfo.Back.FailOp = StencilOp.Keep;
+            dsInfo.Back.PassOp = StencilOp.Keep;
+            dsInfo.Back.CompareOp = CompareOp.Always;
+            dsInfo.Back.CompareMask = 0;
+            dsInfo.Back.Reference = 0;
+            dsInfo.Back.DepthFailOp = StencilOp.Keep;
+            dsInfo.Back.WriteMask = 0;
+            dsInfo.Front = dsInfo.Back;
+            PipelineMultisampleStateCreateInfo msInfo = new PipelineMultisampleStateCreateInfo {
+                SampleMask = null,
+                RasterizationSamples = SampleCounts.Count1,
+                SampleShadingEnable = false,
+                AlphaToCoverageEnable = false,
+                AlphaToOneEnable = false,
+                MinSampleShading = 0
+            };
+
+            GraphicsPipelineCreateInfo pInfo = new GraphicsPipelineCreateInfo(pipelineLayout, pass, 0, shaderStageInfos, iaInfo, pVISCInfo, rsInfo, null, vpInfo, msInfo, dsInfo, cbInfo, null, PipelineCreateFlags.None, null, 0);
+            pipeline = device.CreateGraphicsPipeline(pInfo);
+
+            semaphore = device.CreateSemaphore();
+
+            int n = device.AcquireNextImage2Khx(new AcquireNextImageInfoKhx(swapchain, int.MaxValue, semaphore));
+
+            RecordCommandBuffer(this.graphicsBuffers[0], n);
+
+
+        }
+
+        public void RecordCommandBuffer(CommandBuffer cmdBuffer, int imgIndex) {
+            RenderPassBeginInfo bInfo = new RenderPassBeginInfo(
+                framebuffers[imgIndex],
+                new Rect2D(0, 0, width, height),
+                new ClearColorValue(new ColorF4(.2f, .2f, .2f, 1)),
+                new ClearDepthStencilValue(1, 0));
+            cmdBuffer.CmdBeginRenderPass(bInfo);
+            cmdBuffer.CmdBindDescriptorSets(PipelineBindPoint.Graphics, pipelineLayout, 0, descriptorSets);
+            cmdBuffer.CmdBindPipeline(PipelineBindPoint.Graphics, pipeline);
+            cmdBuffer.CmdBindVertexBuffer(vbo.buffer);
+            cmdBuffer.CmdBindIndexBuffer(index.buffer);
+            cmdBuffer.CmdSetViewport(new Viewport(0, 0, width, height));
+            cmdBuffer.CmdDrawIndexed(index.count);
+            cmdBuffer.CmdEndRenderPass();
         }
 
         public ShaderModule LoadShaderModule(string path)
