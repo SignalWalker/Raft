@@ -11,11 +11,14 @@
 
         protected internal IntPtr handle;
         string title;
+        int width, height;
         SurfaceKhr surf;
         Context context;
 
         internal Window(string title, int x, int y, int width, int height) {
             this.title = title;
+            this.width = width;
+            this.height = height;
             handle = SDL.SDL_CreateWindow(title, x, y, width, height, SDL.SDL_WindowFlags.SDL_WINDOW_VULKAN
                                                                     | SDL.SDL_WindowFlags.SDL_WINDOW_RESIZABLE);
             if (handle == IntPtr.Zero) { throw new SDLException(); }
@@ -29,7 +32,7 @@
 
         public SurfaceKhr GetSurface(Instance inst) => surf ?? (surf = MakeSurface(inst));
 
-        public Context GetContext(Instance inst) => context ?? (context = new Context(inst, GetSurface(inst)));
+        public Context GetContext(Instance inst) => context ?? (context = new Context(inst, GetSurface(inst), width, height));
 
         SurfaceKhr MakeSurface(Instance inst) {
             switch (SDL.SDL_GetPlatform()) {

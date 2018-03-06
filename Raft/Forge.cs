@@ -16,6 +16,8 @@ namespace Raft {
         public readonly Instance instance;
         public List<Window> windows = new List<Window>();
 
+        public Context Context(int winIndex) => windows[winIndex].GetContext(instance);
+
         public Forge(int appVersion, string name, int winX, int winY, int winWidth, int winHeight) {
 
             ApplicationInfo appInfo = new ApplicationInfo {
@@ -47,6 +49,7 @@ namespace Raft {
         public void Quit() {
             SDL.SDL_Quit();
             foreach (Window window in windows) { DestroyWindow(window); }
+            windows.Clear();
         }
 
         public Window MakeWindow(string title, int x, int y, int width, int height) {
@@ -57,7 +60,6 @@ namespace Raft {
 
         public void DestroyWindow(Window win) {
             win.Destroy();
-            windows.Remove(win);
         }
 
         public void DestroyWindow(int index) {

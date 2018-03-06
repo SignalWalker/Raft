@@ -13,16 +13,16 @@
     using Buffer = VulkanCore.Buffer;
 
     public class Context {
-        readonly PhysicalDevice physicalDevice;
-        readonly Device device;
-        readonly PhysicalDeviceMemoryProperties memoryProperties;
-        readonly PhysicalDeviceFeatures features;
-        readonly PhysicalDeviceProperties properties;
-        readonly Queue graphicsQueue;
-        readonly Queue computeQueue;
-        readonly Queue presentQueue;
-        readonly CommandPool graphicsCommandPool;
-        readonly CommandPool computeCommandPool;
+        PhysicalDevice physicalDevice;
+        Device device;
+        PhysicalDeviceMemoryProperties memoryProperties;
+        PhysicalDeviceFeatures features;
+        PhysicalDeviceProperties properties;
+        Queue graphicsQueue;
+        Queue computeQueue;
+        Queue presentQueue;
+        CommandPool graphicsCommandPool;
+        CommandPool computeCommandPool;
 
         public PhysicalDevice PhysicalDevice => physicalDevice;
         public Device Device => device;
@@ -53,105 +53,16 @@
         public Pipeline pipeline;
         Semaphore semaphore;
         Primitive cube;
+        public RenderPass pass;
 
-        public Context(Instance inst, SurfaceKhr surf) {
+        public Context(Instance inst, SurfaceKhr surf, int width, int height) {
+            this.width = width;
+            this.height = height;
 
-            // Find graphics and presentation capable physical device(s) that support
-            // the provided surface for platform.
-            int graphicsQueueFamilyIndex = -1;
-            int computeQueueFamilyIndex = -1;
-            int presentQueueFamilyIndex = -1;
-            foreach (PhysicalDevice physDev in inst.EnumeratePhysicalDevices()) {
-                QueueFamilyProperties[] queueFamilyProperties = physDev.GetQueueFamilyProperties();
-                for (int i = 0; i < queueFamilyProperties.Length; i++) {
-                    if (queueFamilyProperties[i].QueueFlags.HasFlag(Queues.Graphics)) {
-                        if (graphicsQueueFamilyIndex == -1) graphicsQueueFamilyIndex = i;
-                        if (computeQueueFamilyIndex == -1) computeQueueFamilyIndex = i;
-
-                        if (physDev.GetSurfaceSupportKhr(i, surf)) { presentQueueFamilyIndex = i; }
-
-                        if (graphicsQueueFamilyIndex != -1 &&
-                            computeQueueFamilyIndex != -1 &&
-                            presentQueueFamilyIndex != -1) {
-                            physicalDevice = physDev;
-                            break;
-                        }
-                    }
-                }
-
-                if (PhysicalDevice != null) break;
-            }
-
-            if (PhysicalDevice == null) { throw new InvalidOperationException("No suitable physical device found."); }
-
-            // Store memory properties of the physical device.
-            memoryProperties = PhysicalDevice.GetMemoryProperties();
-            features = PhysicalDevice.GetFeatures();
-            properties = PhysicalDevice.GetProperties();
-
-            // Create a logical device.
-            bool sameGraphicsAndPresent = graphicsQueueFamilyIndex == presentQueueFamilyIndex;
-            var queueCreateInfos = new DeviceQueueCreateInfo[sameGraphicsAndPresent ? 1 : 2];
-            queueCreateInfos[0] = new DeviceQueueCreateInfo(graphicsQueueFamilyIndex, 1, 1.0f);
-            if (!sameGraphicsAndPresent)
-                queueCreateInfos[1] = new DeviceQueueCreateInfo(presentQueueFamilyIndex, 1, 1.0f);
-
-            var deviceCreateInfo = new DeviceCreateInfo(
-                queueCreateInfos,
-                new[] {Constant.DeviceExtension.KhrSwapchain},
-                Features);
-            device = PhysicalDevice.CreateDevice(deviceCreateInfo);
-
-            // Get queue(s).
-            graphicsQueue = Device.GetQueue(graphicsQueueFamilyIndex);
-            computeQueue = computeQueueFamilyIndex == graphicsQueueFamilyIndex
-                               ? GraphicsQueue
-                               : Device.GetQueue(computeQueueFamilyIndex);
-            presentQueue = presentQueueFamilyIndex == graphicsQueueFamilyIndex
-                               ? GraphicsQueue
-                               : Device.GetQueue(presentQueueFamilyIndex);
-
-            // Create command pool(s).
-            graphicsCommandPool = Device.CreateCommandPool(new CommandPoolCreateInfo(graphicsQueueFamilyIndex));
-            computeCommandPool = Device.CreateCommandPool(new CommandPoolCreateInfo(computeQueueFamilyIndex));
-
-            swapchain = CreateSwapchain(surf);
-            swapchainImages = swapchain.GetImages();
-            graphicsBuffers = GraphicsCommandPool.AllocateBuffers(
-                new CommandBufferAllocateInfo(CommandBufferLevel.Primary, swapchainImages.Length)).ToList();
-            depthBuffer = ImageWrapper.DepthStencil(this, width, height);
-
-            Matrix4F mvp = new Matrix4F(1, 0, 0, 0,
-                0, -1, 0, 0,
-                0, 0, .5f, 0,
-                0, 0, .5f, 1) * Matrix4F.CreatePerspectiveFieldOfView(45, 1, .1f, 100)
-                * Matrix4F.LookAt(new Vector3F(0, 3, 10),
-                                  new Vector3F(0, 0, 0),
-                                  new Vector3F(0, 1, 0))
-                * Matrix4F.Identity;
-
-            uniformBuffer = BufferWrapper.DynamicUniform<float>(this, 16);
-            IntPtr map = uniformBuffer.memory.Map(0, Interop.SizeOf<float>() * 16);
-            Marshal.Copy(mvp.Transpose.Values, 0, map, 16); // transpose because opengl (and, presumably, vulkan) use column-major
-            uniformBuffer.memory.Unmap();
-
-            DescriptorSetLayoutBinding dSLBin = new DescriptorSetLayoutBinding(0, DescriptorType.UniformBuffer, 1, ShaderStages.Vertex);
-            DescriptorSetLayoutCreateInfo dSLCInfo = new DescriptorSetLayoutCreateInfo(dSLBin);
-            descLayout = Device.CreateDescriptorSetLayout(dSLCInfo);
-            PipelineLayoutCreateInfo pLCInfo = new PipelineLayoutCreateInfo(new[] {descLayout});
-            pipelineLayout = Device.CreatePipelineLayout(pLCInfo);
-
-            DescriptorPoolSize dPSize = new DescriptorPoolSize(DescriptorType.UniformBuffer, 1);
-            DescriptorPoolCreateInfo dPInfo = new DescriptorPoolCreateInfo(1, new[] {dPSize});
-            descriptorPool = device.CreateDescriptorPool(dPInfo);
-
-            DescriptorSetAllocateInfo dSAInfo = new DescriptorSetAllocateInfo(1, descLayout);
-            descriptorSets = descriptorPool.AllocateSets(dSAInfo);
-
-            DescriptorBufferInfo dBInfo = new DescriptorBufferInfo(uniformBuffer.buffer);
-            WriteDescriptorSet wDSet = new WriteDescriptorSet(descriptorSets[0], 0, 0, 1,
-                DescriptorType.UniformBuffer, null, new[] {dBInfo});
-            descriptorPool.UpdateSets(new[] {wDSet});
+            InitDevice(inst, surf);
+            InitSwapchain(surf);
+            InitBuffers();
+            InitPipeline();
 
             AttachmentDescription[] attachments = new AttachmentDescription[2];
             attachments[0] = new AttachmentDescription {
@@ -184,7 +95,7 @@
             };
 
             RenderPassCreateInfo passInfo = new RenderPassCreateInfo(new[] {subPass}, attachments);
-            RenderPass pass = device.CreateRenderPass(passInfo);
+            pass = device.CreateRenderPass(passInfo);
 
             shaderStages = new[] {
                 LoadShaderModule("Resources/Shaders/vert.spv"),
@@ -200,11 +111,11 @@
             imgAttachments = new ImageView[2];
             imgAttachments[1] = depthBuffer.View;
 
-            List<ImageView> imgViews = swapchainImages.Select(i => i.CreateView(
-                                                                  new ImageViewCreateInfo(
-                                                                  swapchain.Format,
-                                                                  new ImageSubresourceRange(ImageAspects.Color, 0, 1, 0, 1))))
-                                           as List<ImageView>;
+            List<ImageView> imgViews = new List<ImageView>();
+            imgViews.AddRange(swapchainImages.Select(i => i.CreateView(
+                                                         new ImageViewCreateInfo(
+                                                             swapchain.Format,
+                                                             new ImageSubresourceRange(ImageAspects.Color, 0, 1, 0, 1)))));
 
             framebuffers = new Framebuffer[swapchainImages.Length];
             for (int i = 0; i < framebuffers.Length; i++) {
@@ -277,29 +188,121 @@
             GraphicsPipelineCreateInfo pInfo = new GraphicsPipelineCreateInfo(pipelineLayout, pass, 0, shaderStageInfos, iaInfo, pVISCInfo, rsInfo, null, vpInfo, msInfo, dsInfo, cbInfo, null, PipelineCreateFlags.None, null, 0);
             pipeline = device.CreateGraphicsPipeline(pInfo);
 
-            semaphore = device.CreateSemaphore();
+            //semaphore = device.CreateSemaphore();
 
-            int n = device.AcquireNextImage2Khx(new AcquireNextImageInfoKhx(swapchain, int.MaxValue, semaphore));
+            //int n = device.AcquireNextImage2Khx(new AcquireNextImageInfoKhx(swapchain, int.MaxValue, semaphore));
 
-            RecordCommandBuffer(this.graphicsBuffers[0], n);
+            //RecordCommandBuffer(this.graphicsBuffers[0], n);
 
 
         }
 
-        public void RecordCommandBuffer(CommandBuffer cmdBuffer, int imgIndex) {
-            RenderPassBeginInfo bInfo = new RenderPassBeginInfo(
-                framebuffers[imgIndex],
-                new Rect2D(0, 0, width, height),
-                new ClearColorValue(new ColorF4(.2f, .2f, .2f, 1)),
-                new ClearDepthStencilValue(1, 0));
-            cmdBuffer.CmdBeginRenderPass(bInfo);
-            cmdBuffer.CmdBindDescriptorSets(PipelineBindPoint.Graphics, pipelineLayout, 0, descriptorSets);
-            cmdBuffer.CmdBindPipeline(PipelineBindPoint.Graphics, pipeline);
-            cmdBuffer.CmdBindVertexBuffer(vbo.buffer);
-            cmdBuffer.CmdBindIndexBuffer(index.buffer);
-            cmdBuffer.CmdSetViewport(new Viewport(0, 0, width, height));
-            cmdBuffer.CmdDrawIndexed(index.count);
-            cmdBuffer.CmdEndRenderPass();
+        void InitPipeline() {
+            DescriptorSetLayoutBinding dSLBin = new DescriptorSetLayoutBinding(0, DescriptorType.UniformBuffer, 1, ShaderStages.Vertex);
+            DescriptorSetLayoutCreateInfo dSLCInfo = new DescriptorSetLayoutCreateInfo(dSLBin);
+            descLayout = Device.CreateDescriptorSetLayout(dSLCInfo);
+            PipelineLayoutCreateInfo pLCInfo = new PipelineLayoutCreateInfo(new[] {descLayout});
+            pipelineLayout = Device.CreatePipelineLayout(pLCInfo);
+
+            DescriptorPoolSize dPSize = new DescriptorPoolSize(DescriptorType.UniformBuffer, 1);
+            DescriptorPoolCreateInfo dPInfo = new DescriptorPoolCreateInfo(1, new[] {dPSize});
+            descriptorPool = device.CreateDescriptorPool(dPInfo);
+
+            DescriptorSetAllocateInfo dSAInfo = new DescriptorSetAllocateInfo(1, descLayout);
+            descriptorSets = descriptorPool.AllocateSets(dSAInfo);
+
+            DescriptorBufferInfo dBInfo = new DescriptorBufferInfo(uniformBuffer.buffer);
+            WriteDescriptorSet wDSet = new WriteDescriptorSet(descriptorSets[0], 0, 0, 1,
+                DescriptorType.UniformBuffer, null, new[] {dBInfo});
+            descriptorPool.UpdateSets(new[] {wDSet});
+        }
+
+        void InitBuffers() {
+            int width;
+            int height;
+            depthBuffer = ImageWrapper.DepthStencil(this, width, height);
+
+            Matrix4F mvp = new Matrix4F(1, 0, 0, 0,
+                               0, -1, 0, 0,
+                               0, 0, .5f, 0,
+                               0, 0, .5f, 1) * Matrix4F.CreatePerspectiveFieldOfView(45, 1, .1f, 100)
+                                             * Matrix4F.LookAt(new Vector3F(0, 3, 10),
+                                                 new Vector3F(0, 0, 0),
+                                                 new Vector3F(0, 1, 0))
+                                             * Matrix4F.Identity;
+
+            uniformBuffer = BufferWrapper.DynamicUniform<float>(this, 16);
+            IntPtr map = uniformBuffer.memory.Map(0, Interop.SizeOf<float>() * 16);
+            Marshal.Copy(mvp.Transpose.Values, 0, map, 16); // transpose because opengl (and, presumably, vulkan) use column-major
+            uniformBuffer.memory.Unmap();
+        }
+
+        void InitSwapchain(SurfaceKhr surf) {
+            swapchain = CreateSwapchain(surf);
+            swapchainImages = swapchain.GetImages();
+            graphicsBuffers = GraphicsCommandPool.AllocateBuffers(
+                new CommandBufferAllocateInfo(CommandBufferLevel.Primary, swapchainImages.Length)).ToList();
+        }
+
+        void InitDevice(Instance inst, SurfaceKhr surf) {
+            // Find graphics and presentation capable physical device(s) that support
+            // the provided surface for platform.
+            int graphicsQueueFamilyIndex = -1;
+            int computeQueueFamilyIndex = -1;
+            int presentQueueFamilyIndex = -1;
+            foreach (PhysicalDevice physDev in inst.EnumeratePhysicalDevices()) {
+                QueueFamilyProperties[] queueFamilyProperties = physDev.GetQueueFamilyProperties();
+                for (int i = 0; i < queueFamilyProperties.Length; i++) {
+                    if (queueFamilyProperties[i].QueueFlags.HasFlag(Queues.Graphics)) {
+                        if (graphicsQueueFamilyIndex == -1) graphicsQueueFamilyIndex = i;
+                        if (computeQueueFamilyIndex == -1) computeQueueFamilyIndex = i;
+
+                        if (physDev.GetSurfaceSupportKhr(i, surf)) { presentQueueFamilyIndex = i; }
+
+                        if (graphicsQueueFamilyIndex != -1 &&
+                            computeQueueFamilyIndex != -1 &&
+                            presentQueueFamilyIndex != -1) {
+                            physicalDevice = physDev;
+                            break;
+                        }
+                    }
+                }
+
+                if (PhysicalDevice != null) break;
+            }
+
+            if (PhysicalDevice == null) { throw new InvalidOperationException("No suitable physical device found."); }
+
+            // Store memory properties of the physical device.
+            memoryProperties = PhysicalDevice.GetMemoryProperties();
+            features = PhysicalDevice.GetFeatures();
+            properties = PhysicalDevice.GetProperties();
+
+            // Create a logical device.
+            bool sameGraphicsAndPresent = graphicsQueueFamilyIndex == presentQueueFamilyIndex;
+            var queueCreateInfos = new DeviceQueueCreateInfo[sameGraphicsAndPresent ? 1 : 2];
+            queueCreateInfos[0] = new DeviceQueueCreateInfo(graphicsQueueFamilyIndex, 1, 1.0f);
+            if (!sameGraphicsAndPresent)
+                queueCreateInfos[1] = new DeviceQueueCreateInfo(presentQueueFamilyIndex, 1, 1.0f);
+
+            var deviceCreateInfo = new DeviceCreateInfo(
+                queueCreateInfos,
+                new[] {Constant.DeviceExtension.KhrSwapchain},
+                Features);
+            device = PhysicalDevice.CreateDevice(deviceCreateInfo);
+
+            // Get queue(s).
+            graphicsQueue = Device.GetQueue(graphicsQueueFamilyIndex);
+            computeQueue = computeQueueFamilyIndex == graphicsQueueFamilyIndex
+                               ? GraphicsQueue
+                               : Device.GetQueue(computeQueueFamilyIndex);
+            presentQueue = presentQueueFamilyIndex == graphicsQueueFamilyIndex
+                               ? GraphicsQueue
+                               : Device.GetQueue(presentQueueFamilyIndex);
+
+            // Create command pool(s).
+            graphicsCommandPool = Device.CreateCommandPool(new CommandPoolCreateInfo(graphicsQueueFamilyIndex));
+            computeCommandPool = Device.CreateCommandPool(new CommandPoolCreateInfo(computeQueueFamilyIndex));
         }
 
         public ShaderModule LoadShaderModule(string path)
@@ -334,7 +337,7 @@
                 presentMode));
         }
 
-        Image MakeDepthBuffer(bool bindMemory = false) {
+        /*Image MakeDepthBuffer(bool bindMemory = false) {
             ImageCreateInfo info = new ImageCreateInfo {
                 ImageType = ImageType.Image2D,
                 Format = Format.D16UNorm,
@@ -360,9 +363,9 @@
                 res.BindMemory(mem);
             }
             return res;
-        }
+        }*/
 
-        Buffer MakeUniformBuffer(long size, bool bindMemory = false) {
+        /*Buffer MakeUniformBuffer(long size, bool bindMemory = false) {
             BufferCreateInfo bInfo = new BufferCreateInfo {
                 Usage = BufferUsages.UniformBuffer,
                 Size = size,
@@ -387,7 +390,7 @@
             }
 
             return res;
-        }
+        }*/
 
         public void Dispose() {
             ComputeCommandPool.Dispose();
