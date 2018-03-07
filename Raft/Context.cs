@@ -218,8 +218,6 @@
         }
 
         void InitBuffers() {
-            int width;
-            int height;
             depthBuffer = ImageWrapper.DepthStencil(this, width, height);
 
             Matrix4F mvp = new Matrix4F(1, 0, 0, 0,
